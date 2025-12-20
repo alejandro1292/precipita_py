@@ -271,6 +271,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 const labels = data.map(d => d.label);
                 const values = data.map(d => d.valor);
+                const normalizedValues = data.map(d => d.valor_normalizado);
 
                 // Colores y tamaños para resaltar el mismo mes
                 const pointBackgroundColors = data.map(d =>
@@ -284,18 +285,31 @@ document.addEventListener('DOMContentLoaded', () => {
                     type: 'line',
                     data: {
                         labels: labels,
-                        datasets: [{
-                            label: 'Precipitación (mm)',
-                            data: values,
-                            borderColor: 'rgba(54, 162, 235, 1)',
-                            backgroundColor: 'rgba(54, 162, 235, 0.1)',
-                            borderWidth: 2,
-                            fill: true,
-                            tension: 0.3,
-                            pointBackgroundColor: pointBackgroundColors,
-                            pointRadius: pointRadius,
-                            pointHoverRadius: 8
-                        }]
+                        datasets: [
+                            {
+                                label: 'Precipitación Real (mm)',
+                                data: values,
+                                borderColor: 'rgba(54, 162, 235, 0.5)',
+                                backgroundColor: 'rgba(54, 162, 235, 0.05)',
+                                borderWidth: 1,
+                                fill: true,
+                                tension: 0.3,
+                                pointBackgroundColor: pointBackgroundColors,
+                                pointRadius: pointRadius,
+                                pointHoverRadius: 8
+                            },
+                            {
+                                label: 'Tendencia Normalizada',
+                                data: normalizedValues,
+                                borderColor: 'rgba(75, 192, 192, 1)',
+                                backgroundColor: 'transparent',
+                                borderWidth: 2,
+                                borderDash: [5, 5],
+                                fill: false,
+                                tension: 0.4,
+                                pointRadius: 0
+                            }
+                        ]
                     },
                     options: {
                         responsive: true,
@@ -314,10 +328,18 @@ document.addEventListener('DOMContentLoaded', () => {
                             }
                         },
                         plugins: {
-                            legend: { display: false },
+                            legend: {
+                                display: true,
+                                position: 'top',
+                                labels: { boxWidth: 12 }
+                            },
                             tooltip: {
                                 callbacks: {
-                                    label: (context) => ` ${context.parsed.y} mm (${data[context.dataIndex].mes})`
+                                    label: (context) => {
+                                        const val = context.parsed.y;
+                                        const label = context.dataset.label;
+                                        return ` ${label}: ${val} mm`;
+                                    }
                                 }
                             }
                         }

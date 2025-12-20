@@ -70,12 +70,29 @@ def api_historico():
     datos_finales = [d for d in datos_filtrados if d.anho in ultimos_5_anhos]
     datos_finales.sort(key=lambda x: (x.anho, meses_lista.index(x.mes)))
     
-    historico = [{
-        'label': f"{d.mes[:3]} {str(d.anho)[2:]}",
-        'valor': d.valor,
-        'anho': d.anho,
-        'mes': d.mes
-    } for d in datos_finales]
+    # Calcular umbral de outliers (Media + 2*DesvEst)
+    import numpy as np
+    valores_all = [d.valor for d in datos_filtrados if d.valor is not None]
+    if valores_all:
+        media = np.mean(valores_all)
+        desv = np.std(valores_all)
+        umbral = media + 2 * desv
+    else:
+        umbral = 9999
+
+    historico = []
+    for d in datos_finales:
+        valor = d.valor
+        # Normalizar si supera el umbral
+        valor_norm = min(valor, umbral) if valor is not None else None
+        
+        historico.append({
+            'label': f"{d.mes[:3]} {str(d.anho)[2:]}",
+            'valor': valor,
+            'valor_normalizado': valor_norm,
+            'anho': d.anho,
+            'mes': d.mes
+        })
     
     return jsonify(historico)
 
