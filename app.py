@@ -240,4 +240,5 @@ def api_upload():
     return jsonify({'status': 'success'})
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5002)
+    # Bind to 0.0.0.0 so the app is accessible from outside the container
+    app.run(debug=True, host='0.0.0.0', port=5002)
