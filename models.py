@@ -14,6 +14,6 @@ class Estacion(db.Model):
     __tablename__ = 'estaciones'
     id = db.Column(db.Integer, primary_key=True)
     nombre = db.Column(db.String(100), unique=True, nullable=False)
-    latitud = db.Column(db.Float, nullable=False)
-    longitud = db.Column(db.Float, nullable=False)
+    latitud = db.Column(db.Float, nullable=True)
+    longitud = db.Column(db.Float, nullable=True)
     departamento = db.Column(db.String(100), nullable=False)

@@ -44,6 +44,18 @@ def normalizar_nombre(nombre):
     nombre = re.sub(r'[^a-z0-9]', '', nombre)
     return nombre
 
+def buscar_coordenadas(nombre_buscado, depto_default='Desconocido'):
+    """Busca coordenadas en COORDENADAS_MAP usando coincidencia parcial de nombres normalizados."""
+    norm_buscado = normalizar_nombre(nombre_buscado)
+    if not norm_buscado:
+        return None, None, depto_default
+        
+    for key, coords in COORDENADAS_MAP.items():
+        norm_key = normalizar_nombre(key)
+        if norm_key in norm_buscado or norm_buscado in norm_key:
+            return coords
+    return None, None, depto_default
+
 def poblar_estaciones():
     """Puebla la tabla de estaciones basándose en las ubicaciones únicas del CSV."""
     ubicaciones = db.session.query(Precipitacion.ubicacion).distinct().all()
@@ -54,7 +66,7 @@ def poblar_estaciones():
     for (nombre,) in ubicaciones:
         norm_nombre = normalizar_nombre(nombre)
         if norm_nombre not in estaciones_existentes:
-            lat, lng, depto = COORDENADAS_MAP.get(nombre, (None, None, 'Desconocido'))
+            lat, lng, depto = buscar_coordenadas(nombre)
             estacion = Estacion(
                 nombre=nombre,
                 latitud=lat,
@@ -77,7 +89,22 @@ def importar_csv(file_path):
         f.close()
 
     lines = content.splitlines()
-    reader = csv.DictReader(lines, delimiter=';')
+    if not lines:
+        return
+
+    # Detectar delimitador (punto y coma, coma o punto)
+    first_line = lines[0]
+    delimiters = [';', ',']
+    delimiter = ',' # Default
+    max_count = -1
+    
+    for d in delimiters:
+        count = first_line.count(d)
+        if count > max_count:
+            max_count = count
+            delimiter = d
+            
+    reader = csv.DictReader(lines, delimiter=delimiter)
     
     # Cache de estaciones y registros existentes (mapeando a objetos para actualización)
     estaciones_existentes = {normalizar_nombre(e.nombre): e for e in Estacion.query.all()}
@@ -104,13 +131,14 @@ def importar_csv(file_path):
                 registros_existentes[key].valor = valor
                 continue
 
-            # Si la estación no existe, crearla sin coordenadas
+            # Si la estación no existe, crearla
             if norm_nombre not in estaciones_existentes:
+                lat, lng, depto = buscar_coordenadas(ubicacion_nombre, row.get('Departamento', 'Desconocido').strip())
                 nueva_estacion = Estacion(
                     nombre=ubicacion_nombre,
-                    latitud=None,
-                    longitud=None,
-                    departamento=row.get('Departamento', 'Desconocido').strip()
+                    latitud=lat,
+                    longitud=lng,
+                    departamento=depto
                 )
                 db.session.add(nueva_estacion)
                 db.session.flush()
@@ -131,12 +159,15 @@ def importar_csv(file_path):
 
 import numpy as np
 
-def obtener_serie_temporal(ubicacion):
+def obtener_serie_temporal(ubicacion, hasta_anho=None):
     """Obtiene la serie temporal continua de precipitaciones para una ubicación."""
     norm_ubicacion = normalizar_nombre(ubicacion)
     datos = Precipitacion.query.all()
     datos_filtrados = [d for d in datos if normalizar_nombre(d.ubicacion) == norm_ubicacion]
     
+    if hasta_anho:
+        datos_filtrados = [d for d in datos_filtrados if d.anho < hasta_anho]
+        
     if not datos_filtrados:
         return []
 
@@ -161,28 +192,33 @@ def obtener_serie_temporal(ubicacion):
             
     return serie
 
-def predecir_precipitacion(mes, ubicacion):
+def predecir_precipitacion(mes, anho, ubicacion):
     """
     Predice la probabilidad de lluvia utilizando promedios ponderados y FFT.
     """
     norm_ubicacion = normalizar_nombre(ubicacion)
-    serie = obtener_serie_temporal(ubicacion)
+    serie = obtener_serie_temporal(ubicacion, hasta_anho=anho)
     
     meses_lista = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Setiembre', 'Octubre', 'Noviembre', 'Diciembre']
     
-    # Obtener datos históricos para el mes
-    datos_mes = [d for d in Precipitacion.query.all() if normalizar_nombre(d.ubicacion) == norm_ubicacion and d.mes.lower() == mes.lower()]
+    # Obtener datos históricos para el mes, limitados a los 5 años anteriores al año solicitado
+    datos_mes = [d for d in Precipitacion.query.all() if normalizar_nombre(d.ubicacion) == norm_ubicacion and d.mes.lower() == mes.lower() and (anho - 5 <= d.anho < anho)]
+    
+    # Si no hay datos en los últimos 5 años, ampliar la búsqueda a todo lo anterior
+    if not datos_mes:
+        datos_mes = [d for d in Precipitacion.query.all() if normalizar_nombre(d.ubicacion) == norm_ubicacion and d.mes.lower() == mes.lower() and d.anho < anho]
+
     if not datos_mes:
         return None, 0.0, "N/A", "❓"
 
     valores_est = [d.valor for d in datos_mes if d.valor is not None]
     
-    # Promedio Ponderado (más peso a los últimos 10 años)
+    # Promedio Ponderado (más peso a los últimos 5 años)
     max_anho = max(d.anho for d in datos_mes)
     pesos_valores = []
     for d in datos_mes:
         if d.valor is not None:
-            peso = 2.0 if (max_anho - d.anho) <= 10 else 1.0
+            peso = 2.0 if (max_anho - d.anho) <= 5 else 1.0
             pesos_valores.append((d.valor, peso))
     
     promedio_est = sum(v * p for v, p in pesos_valores) / sum(p for v, p in pesos_valores) if pesos_valores else 0.0

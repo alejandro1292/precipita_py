@@ -28,8 +28,15 @@ Sistema avanzado de análisis y predicción de precipitaciones para Paraguay, ut
 1. Clonar el repositorio.
 2. Crear un entorno virtual: `python -m venv .venv`
 3. Instalar dependencias: `pip install -r requirements.txt`
-4. Ejecutar la aplicación: `python app.py`
-5. Acceder a `http://localhost:5002`
+4. (Opcional) Inicializar la base de datos: `python init_db.py`
+5. Ejecutar la aplicación: `python app.py`
+6. Acceder a `http://localhost:5002`
+
+### Mantenimiento
+- **Reiniciar Base de Datos**: Si necesitas limpiar todos los datos y volver a cargar el CSV original, ejecuta:
+  ```bash
+  python init_db.py
+  ```
 
 ### Ejecución con Docker
 ```bash

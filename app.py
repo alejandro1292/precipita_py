@@ -27,10 +27,10 @@ def index():
 def api_predecir():
     data = request.json
     mes = data.get('mes')
-    anho = data.get('anho')
+    anho = int(data.get('anho', 2023))
     ubicacion = data.get('ubicacion')
     
-    promedio, probabilidad, intensidad, emoji = predecir_precipitacion(mes, ubicacion)
+    promedio, probabilidad, intensidad, emoji = predecir_precipitacion(mes, anho, ubicacion)
     
     if promedio is None:
         return jsonify({'error': 'No hay datos para esta ubicación/mes'}), 404
@@ -51,6 +51,67 @@ def api_predecir():
 def api_historico():
     data = request.json
     ubicacion = data.get('ubicacion')
+    anho_objetivo = int(data.get('anho', 2023))
+    
+    from data_processor import normalizar_nombre, predecir_precipitacion
+    norm_ubicacion = normalizar_nombre(ubicacion)
+    
+    datos = Precipitacion.query.all()
+    datos_filtrados = [d for d in datos if normalizar_nombre(d.ubicacion) == norm_ubicacion]
+    
+    if not datos_filtrados:
+        return jsonify([])
+
+    max_anho_real = max(d.anho for d in datos_filtrados)
+    
+    # Mostrar 5 años terminando en el año objetivo
+    anhos_a_mostrar = list(range(anho_objetivo - 4, anho_objetivo + 1))
+    
+    meses_lista = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Setiembre', 'Octubre', 'Noviembre', 'Diciembre']
+    mapa_reales = {(d.anho, d.mes): d.valor for d in datos_filtrados}
+    
+    # Calcular umbral de outliers solo con datos reales
+    import numpy as np
+    valores_reales = [d.valor for d in datos_filtrados if d.valor is not None]
+    if valores_reales:
+        media = np.mean(valores_reales)
+        desv = np.std(valores_reales)
+        umbral = media + 2 * desv
+    else:
+        umbral = 9999
+
+    historico = []
+    for anho in anhos_a_mostrar:
+        for mes in meses_lista:
+            valor = mapa_reales.get((anho, mes))
+            es_prediccion = False
+            
+            if valor is None:
+                if anho > max_anho_real:
+                    # Generar predicción sintética
+                    valor, _, _, _ = predecir_precipitacion(mes, anho, ubicacion)
+                    es_prediccion = True
+                else:
+                    # Dato faltante histórico
+                    valor = 0.0
+            
+            valor_norm = min(valor, umbral) if valor is not None else 0.0
+            
+            historico.append({
+                'label': f"{mes[:3]} {str(anho)[2:]}",
+                'valor': valor,
+                'valor_normalizado': valor_norm,
+                'anho': anho,
+                'mes': mes,
+                'es_prediccion': es_prediccion
+            })
+    
+    return jsonify(historico)
+
+@app.route('/api/estacionalidad', methods=['POST'])
+def api_estacionalidad():
+    data = request.json
+    ubicacion = data.get('ubicacion')
     
     from data_processor import normalizar_nombre
     norm_ubicacion = normalizar_nombre(ubicacion)
@@ -61,40 +122,60 @@ def api_historico():
     if not datos_filtrados:
         return jsonify([])
 
-    # Encontrar los últimos 5 años únicos
-    anhos_disponibles = sorted(list(set(d.anho for d in datos_filtrados)))
-    ultimos_5_anhos = anhos_disponibles[-5:]
-    
-    # Filtrar por esos años
     meses_lista = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Setiembre', 'Octubre', 'Noviembre', 'Diciembre']
-    datos_finales = [d for d in datos_filtrados if d.anho in ultimos_5_anhos]
-    datos_finales.sort(key=lambda x: (x.anho, meses_lista.index(x.mes)))
+    resumen = []
     
-    # Calcular umbral de outliers (Media + 2*DesvEst)
-    import numpy as np
-    valores_all = [d.valor for d in datos_filtrados if d.valor is not None]
-    if valores_all:
-        media = np.mean(valores_all)
-        desv = np.std(valores_all)
-        umbral = media + 2 * desv
-    else:
-        umbral = 9999
-
-    historico = []
-    for d in datos_finales:
-        valor = d.valor
-        # Normalizar si supera el umbral
-        valor_norm = min(valor, umbral) if valor is not None else None
-        
-        historico.append({
-            'label': f"{d.mes[:3]} {str(d.anho)[2:]}",
-            'valor': valor,
-            'valor_normalizado': valor_norm,
-            'anho': d.anho,
-            'mes': d.mes
+    for mes in meses_lista:
+        valores = [d.valor for d in datos_filtrados if d.mes == mes and d.valor is not None]
+        promedio = sum(valores) / len(valores) if valores else 0
+        resumen.append({
+            'mes': mes,
+            'promedio': round(float(promedio), 2)
         })
     
-    return jsonify(historico)
+    return jsonify(resumen)
+
+@app.route('/api/estacionariedad', methods=['POST'])
+def api_estacionariedad():
+    data = request.json
+    ubicacion = data.get('ubicacion')
+    
+    from data_processor import normalizar_nombre
+    norm_ubicacion = normalizar_nombre(ubicacion)
+    
+    datos = Precipitacion.query.all()
+    datos_filtrados = [d for d in datos if normalizar_nombre(d.ubicacion) == norm_ubicacion]
+    
+    if not datos_filtrados:
+        return jsonify([])
+
+    # Ordenar cronológicamente
+    meses_lista = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Setiembre', 'Octubre', 'Noviembre', 'Diciembre']
+    datos_filtrados.sort(key=lambda x: (x.anho, meses_lista.index(x.mes)))
+    
+    valores = [d.valor for d in datos_filtrados if d.valor is not None]
+    labels = [f"{d.mes[:3]} {str(d.anho)[2:]}" for d in datos_filtrados if d.valor is not None]
+    
+    if not valores:
+        return jsonify([])
+
+    import numpy as np
+    import pandas as pd
+    
+    series = pd.Series(valores)
+    rolling_mean = series.rolling(window=12, min_periods=1).mean()
+    rolling_std = series.rolling(window=12, min_periods=1).std()
+    
+    res = []
+    for i in range(len(valores)):
+        res.append({
+            'label': labels[i],
+            'original': float(valores[i]),
+            'mean': float(rolling_mean[i]) if not np.isnan(rolling_mean[i]) else None,
+            'std': float(rolling_std[i]) if not np.isnan(rolling_std[i]) else None
+        })
+    
+    return jsonify(res)
 
 @app.route('/api/estaciones', methods=['GET', 'POST'])
 def api_estaciones():
@@ -130,8 +211,9 @@ def api_estaciones():
 def api_update_estacion(id):
     estacion = Estacion.query.get_or_404(id)
     data = request.json
-    estacion.latitud = data.get('latitud')
-    estacion.longitud = data.get('longitud')
+    estacion.departamento = data.get('departamento', estacion.departamento)
+    estacion.latitud = data.get('latitud', estacion.latitud)
+    estacion.longitud = data.get('longitud', estacion.longitud)
     db.session.commit()
     return jsonify({'status': 'success'})
 

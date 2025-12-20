@@ -23,7 +23,7 @@
         </div>
     </nav>
 
-    <section class="section">
+    <section class="section" style="padding: 1rem 1rem !important;">
         <div class="container is-fluid">
             <div class="columns">
                 <!-- Columna 1: Predicción y Carga -->
@@ -43,7 +43,6 @@
                     </div>
 
                     <div class="box">
-                        <h2 class="title is-4">Predicción</h2>
                         <div class="field">
                             <label class="label">Ubicación</label>
                             <div class="control">
@@ -108,10 +107,20 @@
                                 <p>Valor Real: <strong id="res-real">-</strong> mm</p>
                                 <p>Error: <strong id="res-error">-</strong> mm</p>
                             </div>
-                            <button id="btn-ver-historico" class="button is-link is-outlined is-fullwidth mt-3">
-                                <span class="icon"><i class="fas fa-chart-line"></i></span>
-                                <span>Ver Histórico</span>
-                            </button>
+                            <div class="buttons mt-3">
+                                <button id="btn-ver-historico" class="button is-link is-fullwidth">
+                                    <span class="icon"><i class="fas fa-chart-line"></i></span>
+                                    <span>Ver Histórico</span>
+                                </button>
+                                <button id="btn-ver-estacionalidad" class="button is-info is-fullwidth">
+                                    <span class="icon"><i class="fas fa-calendar-alt"></i></span>
+                                    <span>Ver Estacionalidad</span>
+                                </button>
+                                <button id="btn-ver-estacionariedad" class="button is-info is-fullwidth">
+                                    <span class="icon"><i class="fas fa-wave-square"></i></span>
+                                    <span>Ver Estacionariedad</span>
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -126,38 +135,27 @@
                 <!-- Columna 3: ABM de Estaciones -->
                 <div class="column is-4">
                     <div class="box">
-                        <h2 class="title is-4">Gestión de Estaciones</h2>
-                        <div class="columns is-multiline">
-                            <div class="column is-12">
-                                <div class="field">
-                                    <label class="label">Nombre</label>
-                                    <input id="est-nombre" class="input" type="text" placeholder="Nombre Estación">
-                                </div>
-                            </div>
-                            <div class="column is-12">
-                                <div class="field">
-                                    <label class="label">Departamento</label>
-                                    <input id="est-depto" class="input" type="text" placeholder="Departamento">
-                                </div>
-                            </div>
-                            <div class="column is-12">
-                                <div class="field">
-                                    <label class="label">Coordenadas</label>
-                                    <div class="control">
-                                        <input id="est-coords" class="input" type="text"
-                                            placeholder="Click derecho en mapa" readonly>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="column is-12">
-                                <button id="btn-add-estacion" class="button is-success is-fullwidth">Añadir
-                                    Estación</button>
-                            </div>
+                        <div class="is-flex is-justify-content-space-between is-align-items-center mb-4">
+                            <h2 class="title is-4 mb-0">Gestión de Estaciones</h2>
+                            <button id="btn-abrir-modal-add" class="button is-primary is-small">
+                                <span class="icon"><i class="fas fa-plus"></i></span>
+                                <span>Agregar</span>
+                            </button>
                         </div>
 
                         <hr>
 
-                        <div class="table-container" style="max-height: 350px; overflow-y: auto;">
+                        <div class="field">
+                            <div class="control has-icons-left">
+                                <input id="filter-estaciones" class="input is-small" type="text"
+                                    placeholder="Filtrar por nombre o departamento...">
+                                <span class="icon is-small is-left">
+                                    <i class="fas fa-search"></i>
+                                </span>
+                            </div>
+                        </div>
+
+                        <div class="table-container" style="max-height: 540px; overflow-y: auto;">
                             <table class="table is-fullwidth is-striped is-hoverable is-narrow">
                                 <thead>
                                     <tr>
@@ -228,8 +226,94 @@
                 <button class="delete" aria-label="close" id="btn-close-modal"></button>
             </header>
             <section class="modal-card-body">
-                <canvas id="chart-historico"></canvas>
+                <div id="hist-loader" class="loader-container">
+                    <div class="spinner"></div>
+                    <p>Generando proyección y cargando datos...</p>
+                </div>
+                <canvas id="chart-historico" class="is-hidden"></canvas>
             </section>
+        </div>
+    </div>
+
+    <!-- Modal para Resumen de Estacionalidad -->
+    <div id="modal-estacionalidad" class="modal">
+        <div class="modal-background"></div>
+        <div class="modal-card" style="width: 80%; max-width: 800px;">
+            <header class="modal-card-head">
+                <p class="modal-card-title">Resumen Estacional: <span id="est-titulo"></span></p>
+                <button class="delete" aria-label="close" id="btn-close-modal-est"></button>
+            </header>
+            <section class="modal-card-body">
+                <div id="est-loader" class="loader-container">
+                    <div class="spinner"></div>
+                    <p>Calculando promedios históricos...</p>
+                </div>
+                <canvas id="chart-estacionalidad" class="is-hidden"></canvas>
+            </section>
+        </div>
+    </div>
+
+    <!-- Modal para Análisis de Estacionariedad -->
+    <div id="modal-estacionariedad" class="modal">
+        <div class="modal-background"></div>
+        <div class="modal-card" style="width: 80%; max-width: 800px;">
+            <header class="modal-card-head">
+                <p class="modal-card-title">Análisis de Estacionariedad: <span id="esta-titulo"></span></p>
+                <button class="delete" aria-label="close" id="btn-close-modal-esta"></button>
+            </header>
+            <section class="modal-card-body">
+                <div id="esta-loader" class="loader-container">
+                    <div class="spinner"></div>
+                    <p>Calculando estadísticas móviles (Media y Desv. Est.)...</p>
+                </div>
+                <canvas id="chart-estacionariedad" class="is-hidden"></canvas>
+            </section>
+        </div>
+    </div>
+
+    <!-- Modal para Agregar/Editar Estación -->
+    <div id="modal-estacion" class="modal">
+        <div class="modal-background"></div>
+        <div class="modal-card">
+            <header class="modal-card-head">
+                <p class="modal-card-title" id="modal-estacion-titulo">Estación</p>
+                <button class="delete" aria-label="close" id="btn-close-modal-estacion"></button>
+            </header>
+            <section class="modal-card-body">
+                <input type="hidden" id="est-id">
+                <div class="field">
+                    <label class="label">Nombre (Identificador)</label>
+                    <div class="control">
+                        <input id="est-nombre" class="input" type="text" placeholder="Nombre de la estación">
+                    </div>
+                    <p class="help">El nombre es el identificador único y no puede cambiarse al editar.</p>
+                </div>
+                <div class="field">
+                    <label class="label">Departamento</label>
+                    <div class="control">
+                        <input id="est-depto" class="input" type="text" placeholder="Departamento">
+                    </div>
+                </div>
+                <div class="field">
+                    <label class="label">Coordenadas</label>
+                    <div class="field has-addons">
+                        <div class="control is-expanded">
+                            <input id="est-coords" class="input" type="text" placeholder="Click derecho en mapa"
+                                readonly>
+                        </div>
+                        <div class="control">
+                            <a class="button is-static">
+                                <span class="icon"><i class="fas fa-map-marker-alt"></i></span>
+                            </a>
+                        </div>
+                    </div>
+                    <p class="help">Haz clic derecho en el mapa para capturar las coordenadas.</p>
+                </div>
+            </section>
+            <footer class="modal-card-foot">
+                <button id="btn-guardar-estacion" class="button is-success">Guardar Cambios</button>
+                <button class="button btn-cancelar-estacion">Cancelar</button>
+            </footer>
         </div>
     </div>
 
