@@ -181,13 +181,16 @@ document.addEventListener('DOMContentLoaded', () => {
         modalEstacion.classList.add('is-active');
     }
 
-    document.getElementById('btn-abrir-modal-add').onclick = () => abrirModalEstacion();
-    document.getElementById('btn-close-modal-estacion').onclick = () => modalEstacion.classList.remove('is-active');
+    const btnAbrirModalAdd = document.getElementById('btn-abrir-modal-add');
+    if (btnAbrirModalAdd) btnAbrirModalAdd.onclick = () => abrirModalEstacion();
+    const btnCloseModalEstacion = document.getElementById('btn-close-modal-estacion');
+    if (btnCloseModalEstacion) btnCloseModalEstacion.onclick = () => modalEstacion.classList.remove('is-active');
     document.querySelectorAll('.btn-cancelar-estacion').forEach(btn => {
         btn.onclick = () => modalEstacion.classList.remove('is-active');
     });
 
-    document.getElementById('btn-guardar-estacion').onclick = () => {
+    const btnGuardarEstacion = document.getElementById('btn-guardar-estacion');
+    if (btnGuardarEstacion) btnGuardarEstacion.onclick = () => {
         const id = document.getElementById('est-id').value;
         const nombre = document.getElementById('est-nombre').value;
         const depto = document.getElementById('est-depto').value;
@@ -223,15 +226,18 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     // Filtro de estaciones
-    document.getElementById('filter-estaciones').addEventListener('input', (e) => {
-        const term = e.target.value.toLowerCase();
-        const filtered = allEstaciones.filter(est => {
-            const nombre = (est.nombre || '').toLowerCase();
-            const depto = (est.departamento || est.depto || '').toLowerCase();
-            return nombre.includes(term) || depto.includes(term);
+    const filterEstEl = document.getElementById('filter-estaciones');
+    if (filterEstEl) {
+        filterEstEl.addEventListener('input', (e) => {
+            const term = e.target.value.toLowerCase();
+            const filtered = allEstaciones.filter(est => {
+                const nombre = (est.nombre || '').toLowerCase();
+                const depto = (est.departamento || est.depto || '').toLowerCase();
+                return nombre.includes(term) || depto.includes(term);
+            });
+            renderEstaciones(filtered);
         });
-        renderEstaciones(filtered);
-    });
+    }
 
     loadEstaciones();
 
@@ -302,10 +308,15 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Botón Predecir
-    document.getElementById('btn-predecir').addEventListener('click', () => {
-        const ubicacion = document.getElementById('ubicacion-input').value;
-        const mes = document.getElementById('mes-select').value;
-        const anho = document.getElementById('anho-input').value;
+    const btnPredecir = document.getElementById('btn-predecir');
+    if (btnPredecir) {
+        btnPredecir.addEventListener('click', () => {
+            const ubicacionEl = document.getElementById('ubicacion-input');
+            const mesEl = document.getElementById('mes-select');
+            const anhoEl = document.getElementById('anho-input');
+            const ubicacion = ubicacionEl ? ubicacionEl.value : '';
+            const mes = mesEl ? mesEl.value : '';
+            const anho = anhoEl ? anhoEl.value : '';
 
         if (!ubicacion) {
             showNotification('Por favor seleccione una ubicación en el mapa.', 'is-warning');
@@ -348,11 +359,143 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 showNotification('Predicción calculada con éxito.', 'is-success');
             });
-    });
+        });
+    }
 
     // Gráfico Histórico
     let historicoChart = null;
     const modal = document.getElementById('modal-historico');
+
+    // Diagrama de Dispersión (Validación)
+    let validacionChart = null;
+    const modalVal = document.getElementById('modal-validacion');
+
+    document.getElementById('btn-ver-validacion').onclick = () => {
+        const ubicacion = document.getElementById('ubicacion-input').value;
+        if (!ubicacion) {
+            showNotification('Por favor seleccione una ubicación en el mapa.', 'is-warning');
+            return;
+        }
+
+        document.getElementById('val-titulo').innerText = ubicacion;
+        modalVal.classList.add('is-active');
+
+        // Mostrar loader y ocultar canvas/metrics
+        document.getElementById('val-loader').classList.remove('is-hidden');
+        document.getElementById('chart-validacion').classList.add('is-hidden');
+        document.getElementById('val-metrics').classList.add('is-hidden');
+
+        const mes = document.getElementById('mes-select').value;
+        const anho = parseInt(document.getElementById('anho-input').value, 10) || new Date().getFullYear();
+
+        fetch('/api/validacion', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ubicacion, mes, anho })
+        })
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById('val-loader').classList.add('is-hidden');
+
+                const pairs = data.pairs || [];
+                if (!pairs.length) {
+                    showNotification('No hay pares reales/predichos disponibles para esta ubicación.', 'is-warning');
+                    return;
+                }
+
+                document.getElementById('chart-validacion').classList.remove('is-hidden');
+                document.getElementById('val-metrics').classList.remove('is-hidden');
+
+                // Mostrar métricas
+                const rmse = (typeof data.rmse === 'number') ? data.rmse.toFixed(2) : '-';
+                const r2 = (typeof data.r2 === 'number') ? data.r2.toFixed(3) : '-';
+                document.getElementById('val-rmse').innerText = rmse;
+                document.getElementById('val-r2').innerText = r2;
+
+                // Mostrar rango de años usado
+                const years = pairs.map(p => p.anho);
+                const minYear = Math.min(...years);
+                const maxYear = Math.max(...years);
+                document.getElementById('val-range').innerText = `${minYear} — ${maxYear}`;
+
+                // Preparar datos para Chart.js (scatter) y agrupar por año
+                const reals = pairs.map(p => p.real);
+                const preds = pairs.map(p => p.predicho);
+                const minVal = Math.min(...reals.concat(preds));
+                const maxVal = Math.max(...reals.concat(preds));
+
+                // Determinar años presentes y asignar colores HSL
+                const uniqueYears = Array.from(new Set(pairs.map(p => p.anho))).sort((a,b)=>a-b);
+                const yearColors = {};
+                uniqueYears.forEach((y, i) => {
+                    const hue = Math.floor((i * 360) / Math.max(1, uniqueYears.length));
+                    yearColors[y] = `hsla(${hue}, 75%, 45%, 0.85)`;
+                });
+
+                // Crear un dataset por año para que cada año tenga color y leyenda
+                const perYearDatasets = uniqueYears.map(y => ({
+                    label: String(y),
+                    data: pairs.filter(p => p.anho === y).map(p => ({ x: p.real, y: p.predicho, label: `${p.mes} ${p.anho}` })),
+                    backgroundColor: yearColors[y],
+                    pointRadius: 6,
+                    showLine: false
+                }));
+
+                const ctx = document.getElementById('chart-validacion').getContext('2d');
+                if (validacionChart) {
+                    validacionChart.destroy();
+                }
+
+                validacionChart = new Chart(ctx, {
+                    type: 'scatter',
+                    data: {
+                        datasets: [
+                            ...perYearDatasets,
+                            {
+                                label: 'Diagonal 1:1',
+                                data: [{ x: minVal, y: minVal }, { x: maxVal, y: maxVal }],
+                                type: 'line',
+                                borderColor: 'rgba(200,0,0,0.8)',
+                                borderWidth: 1,
+                                fill: false,
+                                pointRadius: 0,
+                                tension: 0
+                            }
+                        ]
+                    },
+                    options: {
+                        plugins: {
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        const d = context.raw || {};
+                                        if (d && typeof d.x !== 'undefined' && typeof d.y !== 'undefined') {
+                                            return `${d.label || ''}: Real=${d.x}, Pred=${d.y}`;
+                                        }
+                                        return '';
+                                    }
+                                }
+                            },
+                            legend: { position: 'top' }
+                        },
+                        scales: {
+                            x: {
+                                title: { display: true, text: 'Real (mm)' }
+                            },
+                            y: {
+                                title: { display: true, text: 'Predicho (mm)' }
+                            }
+                        }
+                    }
+                });
+            })
+            .catch(() => {
+                document.getElementById('val-loader').classList.add('is-hidden');
+                showNotification('Error al generar el diagrama de dispersión.', 'is-danger');
+            });
+    };
+
+    document.getElementById('btn-close-modal-val').onclick = () => modalVal.classList.remove('is-active');
 
     document.getElementById('btn-ver-historico').onclick = () => {
         const ubicacion = document.getElementById('ubicacion-input').value;
@@ -716,13 +859,21 @@ document.addEventListener('DOMContentLoaded', () => {
             });
     };
 
-    document.getElementById('btn-close-modal-esta').onclick = () => modalEsta.classList.remove('is-active');
-    modalEsta.querySelector('.modal-background').onclick = () => modalEsta.classList.remove('is-active');
+    const btnCloseModalEsta = document.getElementById('btn-close-modal-esta');
+    if (btnCloseModalEsta) btnCloseModalEsta.onclick = () => modalEsta.classList.remove('is-active');
+    if (modalEsta) {
+        const mbg2 = modalEsta.querySelector('.modal-background');
+        if (mbg2) mbg2.onclick = () => modalEsta.classList.remove('is-active');
+    }
 
     // Botón Añadir Estación
-    document.getElementById('btn-add-estacion').addEventListener('click', () => {
-        const nombre = document.getElementById('est-nombre').value;
-        const depto = document.getElementById('est-depto').value;
+    const btnAddEstacion = document.getElementById('btn-add-estacion');
+    if (btnAddEstacion) {
+        btnAddEstacion.addEventListener('click', () => {
+            const nombreEl = document.getElementById('est-nombre');
+            const deptoEl = document.getElementById('est-depto');
+            const nombre = nombreEl ? nombreEl.value : '';
+            const depto = deptoEl ? deptoEl.value : '';
 
         if (!nombre || !depto || !selectedLatLng) {
             showNotification('Complete nombre, departamento y haga clic derecho en el mapa.', 'is-warning');
@@ -755,21 +906,27 @@ document.addEventListener('DOMContentLoaded', () => {
                     tempMarker = null;
                 }
             });
-    });
+        });
+    }
 
     // Manejo de Archivo CSV
     const fileInput = document.getElementById('csv-file');
-    fileInput.onchange = () => {
-        if (fileInput.files.length > 0) {
-            document.getElementById('file-name').innerText = fileInput.files[0].name;
-        }
-    };
+    if (fileInput) {
+        fileInput.onchange = () => {
+            if (fileInput.files.length > 0) {
+                const fileNameEl = document.getElementById('file-name');
+                if (fileNameEl) fileNameEl.innerText = fileInput.files[0].name;
+            }
+        };
+    }
 
-    document.getElementById('btn-upload').addEventListener('click', () => {
-        if (fileInput.files.length === 0) {
-            showNotification('Seleccione un archivo.', 'is-warning');
-            return;
-        }
+    const btnUpload = document.getElementById('btn-upload');
+    if (btnUpload) {
+        btnUpload.addEventListener('click', () => {
+            if (!fileInput || fileInput.files.length === 0) {
+                showNotification('Seleccione un archivo.', 'is-warning');
+                return;
+            }
 
         const formData = new FormData();
         formData.append('file', fileInput.files[0]);
@@ -792,5 +949,6 @@ document.addEventListener('DOMContentLoaded', () => {
             .catch(err => {
                 showNotification('Error al subir el archivo.', 'is-danger');
             });
-    });
+        });
+    }
 });

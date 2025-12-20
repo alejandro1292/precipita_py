@@ -114,11 +114,15 @@
                                 </button>
                                 <button id="btn-ver-estacionalidad" class="button is-info is-fullwidth">
                                     <span class="icon"><i class="fas fa-calendar-alt"></i></span>
-                                    <span>Ver Estacionalidad</span>
+                                    <span>Estacionalidad</span>
                                 </button>
                                 <button id="btn-ver-estacionariedad" class="button is-info is-fullwidth">
                                     <span class="icon"><i class="fas fa-wave-square"></i></span>
-                                    <span>Ver Estacionariedad</span>
+                                    <span>Estacionariedad</span>
+                                </button>
+                                <button id="btn-ver-validacion" class="button is-info is-fullwidth">
+                                    <span class="icon"><i class="fas fa-braille"></i></span>
+                                    <span>Dispersión</span>
                                 </button>
                             </div>
                         </div>
@@ -267,6 +271,30 @@
                     <p>Calculando estadísticas móviles (Media y Desv. Est.)...</p>
                 </div>
                 <canvas id="chart-estacionariedad" class="is-hidden"></canvas>
+            </section>
+        </div>
+    </div>
+
+    <!-- Modal para Diagrama de Dispersión (Validación) -->
+    <div id="modal-validacion" class="modal">
+        <div class="modal-background"></div>
+        <div class="modal-card" style="width: 80%; max-width: 800px;">
+            <header class="modal-card-head">
+                <p class="modal-card-title">Diagrama de Dispersión: <span id="val-titulo"></span></p>
+                <button class="delete" aria-label="close" id="btn-close-modal-val"></button>
+            </header>
+            <section class="modal-card-body">
+                <div id="val-loader" class="loader-container">
+                    <div class="spinner"></div>
+                    <p>Generando pares Real vs Predicho y calculando métricas...</p>
+                </div>
+                <canvas id="chart-validacion" class="is-hidden"></canvas>
+                <div id="val-metrics" class="content is-hidden mt-3">
+                    <p><strong>RMSE:</strong> <span id="val-rmse">-</span></p>
+                    <p><strong>R²:</strong> <span id="val-r2">-</span></p>
+                    <p><strong>Rango:</strong> <span id="val-range">-</span> (todos los meses)</p>
+                    <blockquote>Qué muestra: El valor Real en el eje X frente al valor Predicho en el eje Y. Útil para detectar sesgos y outliers.</blockquote>
+                </div>
             </section>
         </div>
     </div>

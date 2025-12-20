@@ -1,7 +1,7 @@
 import os
 from flask import Flask, render_template, request, jsonify
 from models import db, Precipitacion, Estacion
-from data_processor import importar_csv, predecir_precipitacion, contrastar_prediccion, poblar_estaciones
+from data_processor import importar_csv, predecir_precipitacion, contrastar_prediccion, poblar_estaciones, MESES_LISTA
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///precipitaciones.db'
@@ -67,7 +67,6 @@ def api_historico():
     # Mostrar 5 años terminando en el año objetivo
     anhos_a_mostrar = list(range(anho_objetivo - 4, anho_objetivo + 1))
     
-    meses_lista = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Setiembre', 'Octubre', 'Noviembre', 'Diciembre']
     mapa_reales = {(d.anho, d.mes): d.valor for d in datos_filtrados}
     
     # Calcular umbral de outliers solo con datos reales
@@ -82,7 +81,7 @@ def api_historico():
 
     historico = []
     for anho in anhos_a_mostrar:
-        for mes in meses_lista:
+        for mes in MESES_LISTA:
             valor = mapa_reales.get((anho, mes))
             es_prediccion = False
             
@@ -122,10 +121,9 @@ def api_estacionalidad():
     if not datos_filtrados:
         return jsonify([])
 
-    meses_lista = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Setiembre', 'Octubre', 'Noviembre', 'Diciembre']
     resumen = []
     
-    for mes in meses_lista:
+    for mes in MESES_LISTA:
         valores = [d.valor for d in datos_filtrados if d.mes == mes and d.valor is not None]
         promedio = sum(valores) / len(valores) if valores else 0
         resumen.append({
@@ -150,8 +148,7 @@ def api_estacionariedad():
         return jsonify([])
 
     # Ordenar cronológicamente
-    meses_lista = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Setiembre', 'Octubre', 'Noviembre', 'Diciembre']
-    datos_filtrados.sort(key=lambda x: (x.anho, meses_lista.index(x.mes)))
+    datos_filtrados.sort(key=lambda x: (x.anho, MESES_LISTA.index(x.mes)))
     
     valores = [d.valor for d in datos_filtrados if d.valor is not None]
     labels = [f"{d.mes[:3]} {str(d.anho)[2:]}" for d in datos_filtrados if d.valor is not None]
@@ -177,6 +174,72 @@ def api_estacionariedad():
     
     return jsonify(res)
 
+
+@app.route('/api/validacion', methods=['POST'])
+def api_validacion():
+    """Devuelve pares (real, predicho) para una ubicación y mes, limitados a los últimos 5 años contados a partir del año seleccionado."""
+    data = request.json
+    ubicacion = data.get('ubicacion')
+    mes = data.get('mes')
+
+    try:
+        anho = int(data.get('anho'))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Parámetro "anho" inválido o faltante'}), 400
+
+    if not ubicacion or not mes:
+        return jsonify({'error': 'Parámetros "ubicacion" y "mes" son obligatorios'}), 400
+
+    from data_processor import normalizar_nombre, predecir_precipitacion
+    norm_ubicacion = normalizar_nombre(ubicacion)
+
+    # Filtrar solo datos reales para la misma ubicación dentro del rango de años especificado
+    datos = Precipitacion.query.all()
+
+    # Rango de años: últimos 5 años terminando en el año seleccionado (inclusive)
+    years = list(range(anho - 4, anho + 1))
+
+    datos_filtrados = [d for d in datos if normalizar_nombre(d.ubicacion) == norm_ubicacion and d.valor is not None and d.anho in years]
+
+    # Ordenar cronológicamente por año y mes (opcional)
+    datos_filtrados.sort(key=lambda x: (x.anho, MESES_LISTA.index(x.mes) if x.mes in MESES_LISTA else 0))
+
+    pares = []
+    import math
+    for d in datos_filtrados:
+        try:
+            pred, _, _, _ = predecir_precipitacion(d.mes, d.anho, d.ubicacion)
+        except Exception:
+            pred = None
+        if pred is None:
+            continue
+        pares.append({
+            'real': float(d.valor),
+            'predicho': float(pred),
+            'mes': d.mes,
+            'anho': d.anho
+        })
+
+    # Calcular métricas simples
+    if pares:
+        reals = [p['real'] for p in pares]
+        preds = [p['predicho'] for p in pares]
+        n = len(reals)
+        mse = sum((r - p) ** 2 for r, p in zip(reals, preds)) / n
+        rmse = math.sqrt(mse)
+        mean_real = sum(reals) / n
+        ss_tot = sum((r - mean_real) ** 2 for r in reals)
+        ss_res = sum((r - p) ** 2 for r, p in zip(reals, preds))
+        r2 = 1 - (ss_res / ss_tot) if ss_tot != 0 else None
+    else:
+        rmse = None
+        r2 = None
+
+    return jsonify({
+        'pairs': pares,
+        'rmse': rmse,
+        'r2': r2
+    })
 @app.route('/api/estaciones', methods=['GET', 'POST'])
 def api_estaciones():
     if request.method == 'POST':

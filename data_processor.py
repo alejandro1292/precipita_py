@@ -7,6 +7,9 @@ MESES_MAP = {
     'Julio': 7, 'Agosto': 8, 'Setiembre': 9, 'Octubre': 10, 'Noviembre': 11, 'Diciembre': 12
 }
 
+# Constante global con la lista de meses (usar un único punto de definición)
+MESES_LISTA = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Setiembre', 'Octubre', 'Noviembre', 'Diciembre']
+
 COORDENADAS_MAP = {
     'Aeropuerto Internacional Guarani': (-25.4542, -54.8431, 'Alto Paraná'),
     'Aeropuerto Internacional Silvio Pettirossi': (-25.2403, -57.5192, 'Central'),
@@ -32,6 +35,9 @@ COORDENADAS_MAP = {
 
 import unicodedata
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 def normalizar_nombre(nombre):
     """Normaliza un nombre: quita acentos, mayúsculas y caracteres no visibles."""
@@ -43,6 +49,45 @@ def normalizar_nombre(nombre):
     # Quitar caracteres no alfanuméricos y espacios extra
     nombre = re.sub(r'[^a-z0-9]', '', nombre)
     return nombre
+
+
+def canonicalizar_mes(mes):
+    """Devuelve el nombre canónico del mes (como aparece en MESES_LISTA) o None si no puede resolverse.
+
+    Acepta entradas numéricas ('1','01'), nombres en cualquier capitalización, abreviaturas de 3 letras,
+    y elimina acentos/diacríticos.
+    """
+    if mes is None:
+        return None
+    mes_s = str(mes).strip()
+    if mes_s == '':
+        return None
+
+    # Si es numérico, mapear a mes
+    try:
+        n = int(mes_s)
+        if 1 <= n <= 12:
+            return MESES_LISTA[n-1]
+    except Exception:
+        pass
+
+    # Normalizar (sin acentos, minúsculas)
+    mes_norm = ''.join(c for c in unicodedata.normalize('NFD', mes_s) if unicodedata.category(c) != 'Mn').lower()
+
+    # Coincidencia exacta con los nombres de MESES_MAP
+    for k in MESES_MAP.keys():
+        k_norm = ''.join(c for c in unicodedata.normalize('NFD', k) if unicodedata.category(c) != 'Mn').lower()
+        if mes_norm == k_norm:
+            return k
+
+    # Intentar coincidencia por prefijo (3 letras)
+    prefix = mes_norm[:3]
+    for k in MESES_MAP.keys():
+        k_norm = ''.join(c for c in unicodedata.normalize('NFD', k) if unicodedata.category(c) != 'Mn').lower()
+        if k_norm.startswith(prefix):
+            return k
+
+    return None
 
 def buscar_coordenadas(nombre_buscado, depto_default='Desconocido'):
     """Busca coordenadas en COORDENADAS_MAP usando coincidencia parcial de nombres normalizados."""
@@ -122,8 +167,13 @@ def importar_csv(file_path):
             
             ubicacion_nombre = ubicacion_nombre.strip()
             norm_nombre = normalizar_nombre(ubicacion_nombre)
-            mes = row['Mes'].strip()
+            mes_raw = row['Mes'].strip()
             anho = int(row['Anho'])
+            mes = canonicalizar_mes(mes_raw)
+            if mes is None:
+                # Ignorar filas con mes no reconocido
+                logger.warning(f"Fila con mes desconocido ignorada: {mes_raw} -> fila: {row}")
+                continue
             
             # Si el registro ya existe, actualizar el valor
             key = (mes, anho, norm_nombre)
@@ -159,6 +209,47 @@ def importar_csv(file_path):
 
 import numpy as np
 
+
+def iqr_bounds(values, k=1.5):
+    """Calcula bounds IQR para detectar outliers (lower, upper)."""
+    arr = np.array([v for v in values if v is not None and not np.isnan(v)], dtype=float)
+    if arr.size == 0:
+        return None, None
+    q1 = np.percentile(arr, 25)
+    q3 = np.percentile(arr, 75)
+    iqr = q3 - q1
+    lower = q1 - k * iqr
+    upper = q3 + k * iqr
+    return lower, upper
+
+
+def winsorize(values, lower_pct=0.05, upper_pct=0.95):
+    """Devuelve lista con valores winsorizados según percentiles."""
+    arr = np.array(values, dtype=float)
+    if arr.size == 0:
+        return arr
+    lower = np.nanpercentile(arr, lower_pct * 100)
+    upper = np.nanpercentile(arr, upper_pct * 100)
+    arr = np.where(np.isnan(arr), np.nanmedian(arr), arr)
+    arr = np.clip(arr, lower, upper)
+    return arr
+
+
+def robust_weighted_mean(values, weights=None, lower_pct=0.05, upper_pct=0.95):
+    """Calcula media ponderada robusta aplicando winsorización antes de ponderar."""
+    arr = np.array(values, dtype=float)
+    if arr.size == 0:
+        return 0.0
+    arr = winsorize(arr, lower_pct, upper_pct)
+    arr = np.maximum(arr, 0.0)  # No permitir negativos en precipitaciones
+    if weights is None:
+        return float(np.nanmean(arr))
+    w = np.array(weights, dtype=float)
+    if np.sum(w) == 0:
+        return float(np.nanmean(arr))
+    return float(np.sum(arr * w) / np.sum(w))
+
+
 def obtener_serie_temporal(ubicacion, hasta_anho=None):
     """Obtiene la serie temporal continua de precipitaciones para una ubicación."""
     norm_ubicacion = normalizar_nombre(ubicacion)
@@ -171,22 +262,20 @@ def obtener_serie_temporal(ubicacion, hasta_anho=None):
     if not datos_filtrados:
         return []
 
-    meses_lista = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Setiembre', 'Octubre', 'Noviembre', 'Diciembre']
-    
     # Encontrar rango de años
     anhos = [d.anho for d in datos_filtrados]
     min_anho, max_anho = min(anhos), max(anhos)
     
-    # Crear un mapa para búsqueda rápida
-    mapa_datos = {(d.anho, d.mes): d.valor for d in datos_filtrados}
+    # Crear un mapa para búsqueda rápida (usar mes canónico)
+    mapa_datos = {(d.anho, canonicalizar_mes(d.mes) or d.mes): d.valor for d in datos_filtrados}
     
     serie = []
     for anho in range(min_anho, max_anho + 1):
-        for mes in meses_lista:
+        for mes in MESES_LISTA:
             valor = mapa_datos.get((anho, mes))
             # Si el valor es None, usamos el promedio del mes para no sesgar la FFT con ceros
             if valor is None:
-                valores_mes = [d.valor for d in datos_filtrados if d.mes == mes and d.valor is not None]
+                valores_mes = [d.valor for d in datos_filtrados if (canonicalizar_mes(d.mes) or d.mes) == mes and d.valor is not None]
                 valor = sum(valores_mes) / len(valores_mes) if valores_mes else 0.0
             serie.append(float(valor))
             
@@ -198,64 +287,125 @@ def predecir_precipitacion(mes, anho, ubicacion):
     """
     norm_ubicacion = normalizar_nombre(ubicacion)
     serie = obtener_serie_temporal(ubicacion, hasta_anho=anho)
-    
-    meses_lista = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Setiembre', 'Octubre', 'Noviembre', 'Diciembre']
-    
-    # Obtener datos históricos para el mes, limitados a los 5 años anteriores al año solicitado
-    datos_mes = [d for d in Precipitacion.query.all() if normalizar_nombre(d.ubicacion) == norm_ubicacion and d.mes.lower() == mes.lower() and (anho - 5 <= d.anho < anho)]
-    
+
+    # Canonicalizar mes de entrada
+    mes_canon = canonicalizar_mes(mes)
+    if mes_canon is None:
+        logger.warning(f"Mes de entrada no reconocido en predecir_precipitacion: {mes}")
+        return None, 0.0, "N/A", "❓"
+
+    # Obtener datos históricos para el mes, limitados a los 5 años anteriores al año solicitado (usar mes canónico)
+    datos_all = Precipitacion.query.all()
+    datos_mes = [d for d in datos_all if normalizar_nombre(d.ubicacion) == norm_ubicacion and (canonicalizar_mes(d.mes) == mes_canon) and (anho - 5 <= d.anho < anho)]
+
     # Si no hay datos en los últimos 5 años, ampliar la búsqueda a todo lo anterior
     if not datos_mes:
-        datos_mes = [d for d in Precipitacion.query.all() if normalizar_nombre(d.ubicacion) == norm_ubicacion and d.mes.lower() == mes.lower() and d.anho < anho]
+        datos_mes = [d for d in datos_all if normalizar_nombre(d.ubicacion) == norm_ubicacion and (canonicalizar_mes(d.mes) == mes_canon) and d.anho < anho]
 
     if not datos_mes:
         return None, 0.0, "N/A", "❓"
 
-    valores_est = [d.valor for d in datos_mes if d.valor is not None]
+    valores_est = [d.valor for d in datos_mes if d.valor is not None and d.valor >= 0]
     
-    # Promedio Ponderado (más peso a los últimos 5 años)
+    # Promedio Ponderado (más peso a los últimos 5 años) — usar media robusta (winsorized)
     max_anho = max(d.anho for d in datos_mes)
-    pesos_valores = []
+    vals = []
+    ws = []
     for d in datos_mes:
-        if d.valor is not None:
+        if d.valor is not None and d.valor >= 0:
             peso = 2.0 if (max_anho - d.anho) <= 5 else 1.0
-            pesos_valores.append((d.valor, peso))
-    
-    promedio_est = sum(v * p for v, p in pesos_valores) / sum(p for v, p in pesos_valores) if pesos_valores else 0.0
+            vals.append(d.valor)
+            ws.append(peso)
+
+    if vals:
+        try:
+            promedio_est = robust_weighted_mean(vals, ws, lower_pct=0.05, upper_pct=0.95)
+            # Log si hubo winsorización significativa
+            vals_arr = np.array(vals, dtype=float)
+            clipped = winsorize(vals_arr, 0.05, 0.95)
+            if np.any(vals_arr != clipped):
+                lower, upper = np.nanpercentile(vals_arr, [5,95])
+                logger.info(f"Winsorizado valores_est para {ubicacion} {mes_canon} a rangos [{lower:.2f}, {upper:.2f}]")
+        except Exception as e:
+            logger.exception("Error calculando promedio_est robusto: %s", e)
+            promedio_est = float(np.mean(vals))
+    else:
+        promedio_est = 0.0
 
     if not serie or len(serie) < 24:
         promedio = promedio_est
     else:
         # --- Lógica FFT ---
-        fft_vals = np.fft.fft(serie)
-        fft_filtrada = np.zeros_like(fft_vals)
-        fft_filtrada[0] = fft_vals[0] # DC
-        
-        # Mantener top 10% de componentes o al menos 3
-        n_comp = max(3, int(len(serie) * 0.1))
-        magnitudes = np.abs(fft_vals)
-        indices_picos = np.argsort(magnitudes)[-n_comp:]
-        for idx in indices_picos:
-            fft_filtrada[idx] = fft_vals[idx]
-            
-        serie_reconstruida = np.fft.ifft(fft_filtrada).real
-        mes_idx = meses_lista.index(mes)
-        valores_mes_fft = [serie_reconstruida[i] for i in range(len(serie_reconstruida)) if i % 12 == mes_idx]
-        promedio_fft = sum(valores_mes_fft) / len(valores_mes_fft) if valores_mes_fft else serie_reconstruida[-1]
-        
-        # Combinar 50/50
-        promedio = (promedio_fft * 0.5) + (promedio_est * 0.5)
+        # Aplicar clipping robusto a la serie para proteger la FFT de picos extremos
+        serie_arr = np.array(serie, dtype=float)
+        if serie_arr.size == 0:
+            promedio = promedio_est
+        else:
+            lower_s, upper_s = np.nanpercentile(serie_arr, [1, 99])
+            serie_clipped = np.clip(serie_arr, lower_s, upper_s)
+            if np.any(serie_arr != serie_clipped):
+                logger.info(f"Serie recortada para FFT ({ubicacion}): bounds [{lower_s:.2f}, {upper_s:.2f}]")
+
+            fft_vals = np.fft.fft(serie_clipped)
+            fft_filtrada = np.zeros_like(fft_vals)
+            fft_filtrada[0] = fft_vals[0] # DC
+
+            # Mantener top 10% de componentes o al menos 3
+            n_comp = max(3, int(len(serie_clipped) * 0.1))
+            magnitudes = np.abs(fft_vals)
+            indices_picos = np.argsort(magnitudes)[-n_comp:]
+            for idx in indices_picos:
+                fft_filtrada[idx] = fft_vals[idx]
+
+            serie_reconstruida = np.fft.ifft(fft_filtrada).real
+
+            try:
+                mes_idx = MESES_LISTA.index(mes_canon)
+            except ValueError:
+                logger.warning(f"Mes canónico no encontrado en MESES_LISTA: {mes_canon}")
+                mes_idx = 0
+
+            # Valores reconstruidos para ese mes (todas las observaciones a ese mes en la serie)
+            valores_mes_fft = [serie_reconstruida[i] for i in range(len(serie_reconstruida)) if i % 12 == mes_idx]
+            promedio_fft = float(np.nanmean(valores_mes_fft)) if valores_mes_fft else float(np.nanmean(serie_reconstruida))
+
+            # Ajustar peso del FFT según cuántos valores mensuales reconstruidos haya (más datos -> más confianza)
+            n_fft = len(valores_mes_fft)
+            if n_fft >= 3:
+                w_fft = 0.6
+            elif n_fft >= 1:
+                w_fft = 0.3
+            else:
+                w_fft = 0.0
+
+            # Reducir peso FFT si la serie es extremadamente variable (evitar overfitting al ruido)
+            mean_series = np.mean(serie_clipped) if serie_clipped.size else 0.0
+            std_series = np.std(serie_clipped) if serie_clipped.size else 0.0
+            cv_series = (std_series / mean_series) if mean_series > 0 else np.inf
+            if cv_series > 1.0:
+                w_fft = max(0.0, w_fft * 0.5)
+
+            w_est = 1.0 - w_fft
+
+            promedio = (promedio_fft * w_fft) + (promedio_est * w_est)
+
+        # Asegurar resultado válido
+        if np.isnan(promedio) or promedio < 0:
+            promedio = float(promedio_est)
+            logger.debug(f"Predicción ajustada al promedio_est por NaN/negativo para {ubicacion} {mes_canon}")
 
     # Probabilidad de lluvia (Heurística de probabilidad diaria basada en volumen mensual)
     # En Paraguay, un mes de 150mm suele tener ~8-10 días de lluvia.
     # Probabilidad diaria estimada = (Días de lluvia / 30)
     dias_estimados = (promedio * 0.05) + 3 # Heurística: 100mm -> 8 días, 200mm -> 13 días
-    probabilidad = min(95, (dias_estimados / 30) * 100)
-    
+    probabilidad = (dias_estimados / 30) * 100
+    probabilidad = min(100.0, max(0.0, probabilidad))
+
     # Ajuste por variabilidad (si el mes es muy inestable, bajar probabilidad)
-    if len(valores_est) > 5:
+    if len(valores_est) > 1:
         desv = np.std(valores_est)
-        cv = desv / (sum(valores_est)/len(valores_est)) if sum(valores_est)>0 else 0
+        mean_val = np.mean(valores_est) if len(valores_est) else 0
+        cv = (desv / mean_val) if mean_val > 0 else 0
         if cv > 0.8: # Alta variabilidad
             probabilidad *= 0.8
 
