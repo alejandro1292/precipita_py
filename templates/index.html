@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Predicción de Precipitaciones - Paraguay</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+    <nav class="navbar is-dark" role="navigation" aria-label="main navigation">
+        <div class="navbar-brand">
+            <a class="navbar-item" href="/">
+                <strong>PrecipitaPY</strong>
+            </a>
+        </div>
+    </nav>
+
+    <section class="section">
+        <div class="container is-fluid">
+            <div class="columns">
+                <!-- Columna 1: Predicción y Carga -->
+                <div class="column is-3">
+                    <div class="box">
+                        <h2 class="title is-4">Cargar Datos</h2>
+                        <div class="file has-name is-fullwidth">
+                            <label class="file-label">
+                                <input id="csv-file" class="file-input" type="file" name="resume">
+                                <span class="file-cta">
+                                    <span class="file-label">Elegir CSV...</span>
+                                </span>
+                                <span id="file-name" class="file-name">No hay archivo</span>
+                            </label>
+                        </div>
+                        <button id="btn-upload" class="button is-info is-fullwidth mt-3">Subir CSV</button>
+                    </div>
+
+                    <div class="box">
+                        <h2 class="title is-4">Predicción</h2>
+                        <div class="field">
+                            <label class="label">Ubicación</label>
+                            <div class="control">
+                                <input id="ubicacion-input" class="input" type="text"
+                                    placeholder="Seleccione en el mapa" readonly>
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label class="label">Mes</label>
+                            <div class="control">
+                                <div class="select is-fullwidth">
+                                    <select id="mes-select">
+                                        <option>Enero</option>
+                                        <option>Febrero</option>
+                                        <option>Marzo</option>
+                                        <option>Abril</option>
+                                        <option>Mayo</option>
+                                        <option>Junio</option>
+                                        <option>Julio</option>
+                                        <option>Agosto</option>
+                                        <option>Setiembre</option>
+                                        <option>Octubre</option>
+                                        <option>Noviembre</option>
+                                        <option>Diciembre</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label class="label">Año (para contrastar)</label>
+                            <div class="control">
+                                <input id="anho-input" class="input" type="number" value="2023">
+                            </div>
+                        </div>
+                        <div class="control">
+                            <button id="btn-predecir" class="button is-primary is-fullwidth">Calcular
+                                Probabilidad</button>
+                        </div>
+
+                        <hr>
+
+                        <div id="resultado-skeleton" class="is-hidden">
+                            <div class="skeleton skeleton-text" style="width: 60%; height: 2rem; margin-bottom: 1rem;">
+                            </div>
+                            <div class="skeleton skeleton-text" style="width: 80%;"></div>
+                            <div class="skeleton skeleton-text" style="width: 70%;"></div>
+                            <div class="skeleton skeleton-text" style="width: 90%;"></div>
+                        </div>
+
+                        <div id="resultado" class="content is-hidden">
+                            <h3 class="subtitle is-5">Resultados <span id="res-emoji"></span></h3>
+                            <p>Intensidad: <strong id="res-intensidad">-</strong></p>
+                            <p>Estimación: <strong id="res-estimacion">-</strong> mm</p>
+                            <p>Probabilidad de Lluvia: <strong id="res-probabilidad">-</strong>%</p>
+                            <div id="res-contraste" class="notification is-info is-light is-hidden">
+                                <p>Valor Real: <strong id="res-real">-</strong> mm</p>
+                                <p>Error: <strong id="res-error">-</strong> mm</p>
+                            </div>
+                            <button id="btn-ver-historico" class="button is-link is-outlined is-fullwidth mt-3">
+                                <span class="icon"><i class="fas fa-chart-line"></i></span>
+                                <span>Ver Histórico</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Columna 2: Mapa -->
+                <div class="column is-5">
+                    <div class="box p-0" style="height: 700px;">
+                        <div id="map" style="height: 100%;"></div>
+                    </div>
+                </div>
+
+                <!-- Columna 3: ABM de Estaciones -->
+                <div class="column is-4">
+                    <div class="box">
+                        <h2 class="title is-4">Gestión de Estaciones</h2>
+                        <div class="columns is-multiline">
+                            <div class="column is-12">
+                                <div class="field">
+                                    <label class="label">Nombre</label>
+                                    <input id="est-nombre" class="input" type="text" placeholder="Nombre Estación">
+                                </div>
+                            </div>
+                            <div class="column is-12">
+                                <div class="field">
+                                    <label class="label">Departamento</label>
+                                    <input id="est-depto" class="input" type="text" placeholder="Departamento">
+                                </div>
+                            </div>
+                            <div class="column is-12">
+                                <div class="field">
+                                    <label class="label">Coordenadas</label>
+                                    <div class="control">
+                                        <input id="est-coords" class="input" type="text"
+                                            placeholder="Click derecho en mapa" readonly>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="column is-12">
+                                <button id="btn-add-estacion" class="button is-success is-fullwidth">Añadir
+                                    Estación</button>
+                            </div>
+                        </div>
+
+                        <hr>
+
+                        <div class="table-container" style="max-height: 350px; overflow-y: auto;">
+                            <table class="table is-fullwidth is-striped is-hoverable is-narrow">
+                                <thead>
+                                    <tr>
+                                        <th>Nombre</th>
+                                        <th>Depto.</th>
+                                        <th>Acción</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="estaciones-list">
+                                    <tr class="skeleton-row">
+                                        <td>
+                                            <div class="skeleton skeleton-text"></div>
+                                        </td>
+                                        <td>
+                                            <div class="skeleton skeleton-text"></div>
+                                        </td>
+                                        <td class="has-text-right">
+                                            <div class="skeleton skeleton-button"></div>
+                                        </td>
+                                    </tr>
+                                    <tr class="skeleton-row">
+                                        <td>
+                                            <div class="skeleton skeleton-text"></div>
+                                        </td>
+                                        <td>
+                                            <div class="skeleton skeleton-text"></div>
+                                        </td>
+                                        <td class="has-text-right">
+                                            <div class="skeleton skeleton-button"></div>
+                                        </td>
+                                    </tr>
+                                    <tr class="skeleton-row">
+                                        <td>
+                                            <div class="skeleton skeleton-text"></div>
+                                        </td>
+                                        <td>
+                                            <div class="skeleton skeleton-text"></div>
+                                        </td>
+                                        <td class="has-text-right">
+                                            <div class="skeleton skeleton-button"></div>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer class="footer">
+        <div class="content has-text-centered">
+            <p><strong>PrecipitaPY</strong> - Análisis Data-Driven de Precipitaciones en Paraguay.</p>
+        </div>
+    </footer>
+
+    <!-- Contenedor de Notificaciones -->
+    <div id="notification-container" style="position: fixed; top: 20px; right: 20px; z-index: 9999; max-width: 300px;">
+    </div>
+
+    <!-- Modal para Gráfico Histórico -->
+    <div id="modal-historico" class="modal">
+        <div class="modal-background"></div>
+        <div class="modal-card" style="width: 80%; max-width: 800px;">
+            <header class="modal-card-head">
+                <p class="modal-card-title">Histórico de Precipitaciones: <span id="hist-titulo"></span></p>
+                <button class="delete" aria-label="close" id="btn-close-modal"></button>
+            </header>
+            <section class="modal-card-body">
+                <canvas id="chart-historico"></canvas>
+            </section>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+
+</html>
