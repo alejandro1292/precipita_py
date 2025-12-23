@@ -2,7 +2,7 @@
 
 Sistema avanzado de análisis y predicción de precipitaciones para Paraguay, con atención especial a robustez frente a datos ruidosos y eventos extremos.
 
-## 🔑 Resumen (rápido)
+## Resumen
 - Predicción híbrida: FFT + promedio histórico robusto.
 - Limpieza y normalización automática de meses y nombres de estaciones al importar CSV.
 - Manejo de outliers: winsorización, clipping antes de FFT y ajuste "tail-aware" para eventos extremos.
